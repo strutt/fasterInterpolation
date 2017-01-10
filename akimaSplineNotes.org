@@ -1,0 +1,98 @@
+#+TITLE:     Akima Interpolation Notes
+#+AUTHOR:    Ben Strutt
+#+EMAIL:     strutt@physics.ucla.edu
+#+STARTUP: entitiespretty inlineimages showall
+#+EXPORT_SELECT_TAGS: export
+#+EXPORT_EXCLUDE_TAGS: noexport
+#+OPTIONS: H:2 num:nil toc:nil \n:nil @:t ::t |:t ^:{} _:{} *:t TeX:t LaTeX:t
+
+* Online resources
+   http://www.iue.tuwien.ac.at/phd/rottinger/node60.html
+
+ https://fossies.org/dox/gsl-2.3/akima_8c_source.html
+
+* Akima Spline: The algorithm
+
+- Built piece-wise from 3rd order polynomials.
+- Only neighbouring points are used to determine polynomial coefficients.
+
+  s_{i} = s(x_{i}) \text{ for } 0 \leq i \lt n
+
+  s(x_{i}) = a_{0} + a_{1}(x - x_{i}) + a_{2}(x - x_{i})^{2} + a_{3}(x - x_{i})^{3} \text{ for } x_{i} \leq x \lt x_{i+1}
+
+- Key bit of code from gsl akima source
+  #+BEGIN_SRC c
+   /* evaluate */
+  {
+    const double x_lo = x_array[index];
+    const double delx = x - x_lo;
+    const double b = state->b[index];
+    const double c = state->c[index];
+    const double d = state->d[index];
+    *y = y_array[index] + delx * (b + delx * (c + d * delx));
+    return GSL_SUCCESS;
+  }
+  #+END_SRC
+
+- So how do they find, b, c, d?
+- First they calculate the gradient
+
+  #+BEGIN_SRC c
+  /* non-periodic boundary conditions */
+  m[-2] = 3.0 * m[0] - 2.0 * m[1];
+  m[-1] = 2.0 * m[0] - m[1];
+  m[size - 1] = 2.0 * m[size - 2] - m[size - 3];
+  m[size] = 3.0 * m[size - 2] - 2.0 * m[size - 3];
+
+  akima_calc (x_array, state->b, state->c, state->d, size, m);
+  #+END_SRC
+
+  - Note: They do some pointer offset on m such that the m[-2] makes sense.
+    #+BEGIN_SRC c
+
+    double * m = state->_m + 2; /* offset so we can address the -1,-2
+                                 components */
+
+    #+END_SRC
+
+
+- They do it here:
+  #+BEGIN_SRC c
+
+  /* common calculation */
+  static void akima_calc (const double x_array[], double b[],  double c[],  double d[], size_t size, double m[])
+  {
+    size_t i;
+
+    for (i = 0; i < (size - 1); i++)
+      {
+        const double NE = fabs (m[i + 1] - m[i]) + fabs (m[i - 1] - m[i - 2]);
+        if (NE == 0.0)
+          {
+            b[i] = m[i];
+            c[i] = 0.0;
+            d[i] = 0.0;
+          }
+        else
+          {
+            const double h_i = x_array[i + 1] - x_array[i];
+            const double NE_next = fabs (m[i + 2] - m[i + 1]) + fabs (m[i] - m[i - 1]);
+            const double alpha_i = fabs (m[i - 1] - m[i - 2]) / NE;
+            double alpha_ip1;
+            double tL_ip1;
+            if (NE_next == 0.0)
+              {
+                tL_ip1 = m[i];
+              }
+            else
+              {
+                alpha_ip1 = fabs (m[i] - m[i - 1]) / NE_next;
+                tL_ip1 = (1.0 - alpha_ip1) * m[i] + alpha_ip1 * m[i + 1];
+              }
+            b[i] = (1.0 - alpha_i) * m[i - 1] + alpha_i * m[i];
+            c[i] = (3.0 * m[i] - 2.0 * b[i] - tL_ip1) / h_i;
+            d[i] = (b[i] + tL_ip1 - 2.0 * m[i]) / (h_i * h_i);
+          }
+      }
+  }
+  #+END_SRC
